@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 
 from streamlit_image_coordinates import streamlit_image_coordinates
 
+import guiHelper as gh
 
 # --- Load image ---
 IMAGE_PATH = "example2.png"  # change this to your image
@@ -15,33 +16,15 @@ img = Image.open(IMAGE_PATH)
 # Resize to fit screen (e.g., max 1200px width)
 MAX_WIDTH = 1200
 
-if img.width > MAX_WIDTH:
-    scale = MAX_WIDTH / img.width
-    new_size = (MAX_WIDTH, int(img.height * scale))
-    img = img.resize(new_size, Image.LANCZOS)
 
-draw = ImageDraw.Draw(img)
+draw = ImageDraw.Draw(gh.rescale_image(img,MAX_WIDTH))
 
 # --- Initialize session state for points ---
 if "points" not in st.session_state:
     st.session_state.points = []  # list of dicts: {"x": ..., "y": ...}
 
-# --- Draw markers on a copy of the image using current points ---
 annotated = img.copy()
-draw = ImageDraw.Draw(annotated)
-
-radius = 6
-for idx, pt in enumerate(st.session_state.points):
-    x, y = pt["x"], pt["y"]
-    # draw a small circle
-    draw.ellipse(
-        (x - radius, y - radius, x + radius, y + radius),
-        outline="red",
-        width=2,
-    )
-    # optional: draw index label
-    draw.text((x + radius + 2, y - radius - 2), str(idx + 1), fill="red")
-
+gh.draw_annotated_image(annotated,st)
 # --- Get click coordinates on the *annotated* image ---
 click = streamlit_image_coordinates(
     annotated,              # NOTE: we now pass the annotated image
