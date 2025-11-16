@@ -63,6 +63,11 @@ def main():
         default=0.9,
         help="Probability threshold for calling positives (default: 0.9)",
     )
+    parser.add_argument(
+        "--radius",
+        type=int,
+        default=4,
+        help="radius for patch extraction"),
 
     args = parser.parse_args()
 
@@ -80,7 +85,7 @@ def main():
 
     # --- Train model ---
     print("Training model...")
-    model = colony_count.train(df_points, img)
+    model = colony_count.train(df_points, img,args.radius)
     print(f"Model trained. is_valid(): {model.is_valid()}")
 
     # --- Predict new features ---

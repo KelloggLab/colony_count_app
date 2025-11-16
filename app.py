@@ -8,7 +8,10 @@ from PIL import Image, ImageDraw
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 import guiHelper as gh
+import colony_count
 
+#initialize colony_count model
+model = 0
 # --- Load image ---
 IMAGE_PATH = "example2.png"  # change this to your image
 
@@ -42,6 +45,15 @@ st.write("Current points:", st.session_state.points)
 if st.button("Clear all points"):
     st.session_state.points = []
     st.experimental_rerun()
+
+
+if st.button("Train Model"):
+	df = pd.DataFrame(st.session_state.points)
+	model = colony_count.train(df,img)
+
+if st.button("Pick Using Model"):
+	print("empty")
+#	df = colony_count.pick(img,model)
 
 # --- Prepare downloads ---
 if st.session_state.points:
