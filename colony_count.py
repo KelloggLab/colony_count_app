@@ -2,6 +2,194 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from pulearn import ElkanotoPuClassifier
+import joblib
+
+def save_model(model, path):
+    """
+    Save a trained ColonyModel to disk.
+
+    Parameters
+    ----------
+    model : ColonyModel
+        The trained model returned by train().
+    path : str or Path
+        File path to save the model (e.g. 'colony_model.joblib').
+    """
+    obj = {
+        "patch_radius": model.patch_radius,
+        "classifier": model.classifier,
+        "_is_trained": model._is_trained,
+    }
+    joblib.dump(obj, path)
+
+
+def load_model(path):
+    """
+    Load a ColonyModel from disk.
+
+    Parameters
+    ----------
+    path : str or Path
+        File path where the model was saved.
+
+    Returns
+    -------
+    ColonyModel
+        A restored model instance with the same classifier and settings.
+    """
+    obj = joblib.load(path)
+    model = ColonyModel(
+        classifier=obj["classifier"],
+        patch_radius=obj["patch_radius"],
+    )
+    # restore training flag if present
+    if "_is_trained" in obj:
+        model._is_trained = obj["_is_trained"]
+    return model
+    
+import math
+import numpy as np
+from PIL import Image
+
+
+def save_patch_gallery(patches, out_path, patch_radius=None, n_cols=10, pad=2):
+    """
+    Create a gallery image of patches and save as a single PNG.
+
+    Parameters
+    ----------
+    patches : np.ndarray
+        Array of shape (N, H, W) or (N, D).
+        If (N, D), patches are assumed to be flattened square patches.
+    out_path : str or Path
+        Where to save the gallery image (e.g. 'patch_gallery.png').
+    patch_radius : int or None
+        If patches are flattened (N, D), and this is provided, patch size
+        is taken as (2*patch_radius+1). If None, size is inferred as sqrt(D).
+    n_cols : int
+        Number of columns in the gallery grid.
+    pad : int
+        Padding (in pixels) between patches.
+    """
+    patches = np.asarray(patches)
+    N = patches.shape[0]
+
+    if N == 0:
+        raise ValueError("No patches provided to save_patch_gallery.")
+
+    # --- reshape to (N, H, W) if needed ---
+    if patches.ndim == 2:
+        # patches are flattened: (N, D)
+        D = patches.shape[1]
+
+        if patch_radius is not None:
+            size = 2 * patch_radius + 1
+            expected_D = size * size
+            if D != expected_D:
+                raise ValueError(
+                    f"Patch dimension {D} does not match radius {patch_radius} "
+                    f"(expected {expected_D})."
+                )
+        else:
+            size = int(math.sqrt(D))
+            if size * size != D:
+                raise ValueError(
+                    "Cannot infer square patch size from flattened dimension "
+                    f"{D}. Provide patch_radius explicitly."
+                )
+
+        patches_reshaped = patches.reshape(N, size, size)
+    elif patches.ndim == 3:
+        # already (N, H, W)
+        patches_reshaped = patches
+        size = patches.shape[1]  # assume square
+    else:
+        raise ValueError(
+            f"Unsupported patches shape {patches.shape}. "
+            "Expected (N, D) or (N, H, W)."
+        )
+
+    H, W = patches_reshaped.shape[1], patches_reshaped.shape[2]
+
+    # --- normalize to 0–255 and convert to uint8 for display ---
+    pmin = patches_reshaped.min()
+    pmax = patches_reshaped.max()
+    if pmax > pmin:
+        norm = (patches_reshaped - pmin) / (pmax - pmin)
+    else:
+        norm = np.zeros_like(patches_reshaped)
+    norm_uint8 = (norm * 255).astype(np.uint8)
+
+    # --- compute grid layout ---
+    n_rows = math.ceil(N / n_cols)
+
+    gallery_width = n_cols * W + (n_cols + 1) * pad
+    gallery_height = n_rows * H + (n_rows + 1) * pad
+
+    # single-channel (grayscale) gallery image
+    gallery = Image.new("L", (gallery_width, gallery_height), color=0)
+
+    # --- paste patches into the gallery ---
+    idx = 0
+    for row in range(n_rows):
+        for col in range(n_cols):
+            if idx >= N:
+                break
+            patch_img = Image.fromarray(norm_uint8[idx])
+            x0 = pad + col * (W + pad)
+            y0 = pad + row * (H + pad)
+            gallery.paste(patch_img, (x0, y0))
+            idx += 1
+
+    # --- save to disk ---
+    gallery.save(out_path, format="PNG")
+    return gallery  # also return the PIL image in case you want to inspect it
+
+
+
+def extract_patches_from_points(img, points, patch_radius=4, flatten=True):
+    """
+    Extract patches from an image at given (x, y) coordinates.
+
+    Parameters
+    ----------
+    img : PIL.Image or ndarray
+        Input image. Will be converted to grayscale internally.
+    points : pandas.DataFrame or iterable of (x, y)
+        If a DataFrame, must contain columns 'x' and 'y'.
+        Otherwise, can be any iterable of (x, y) pairs.
+    patch_radius : int
+        Radius r of the patch. Each patch is (2r+1) x (2r+1).
+    flatten : bool
+        If True, returns patches flattened to shape (N, D),
+        where D = (2r+1)^2. If False, returns (N, H, W).
+
+    Returns
+    -------
+    np.ndarray
+        Array of patches, either (N, D) if flatten=True or (N, H, W) otherwise.
+        This can be passed directly to `save_patch_gallery`.
+    """
+    img_gray = _image_to_gray(img)
+
+    # Normalize points input to a list of (x, y)
+    if hasattr(points, "iterrows"):  # likely a DataFrame
+        coords = [(int(row.x), int(row.y)) for _, row in points.iterrows()]
+    else:
+        coords = [(int(x), int(y)) for (x, y) in points]
+
+    size = 2 * patch_radius + 1
+
+    patches = []
+    for (x, y) in coords:
+        patch_flat = _extract_patch(img_gray, x, y, patch_radius=patch_radius)
+        if flatten:
+            patches.append(patch_flat)
+        else:
+            patches.append(patch_flat.reshape(size, size))
+
+    patches = np.array(patches)
+    return patches
 
 
 # -------------------------
