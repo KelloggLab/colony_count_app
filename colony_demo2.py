@@ -4,38 +4,6 @@ from PIL import Image, ImageDraw
 import colony_count
 
 
-def draw_points_on_image(img, df_points, radius=4, color="red"):
-    """
-    Draw circular markers for each (x, y) in df_points on a copy of img.
-
-    Parameters
-    ----------
-    img : PIL.Image
-        Base image (will not be modified in place).
-    df_points : DataFrame
-        Must contain columns 'x' and 'y'.
-    radius : int
-        Radius of the drawn circles.
-    color : str or tuple
-        Color for the circles.
-
-    Returns
-    -------
-    PIL.Image
-        Annotated image.
-    """
-    annotated = img.convert("RGB").copy()
-    draw = ImageDraw.Draw(annotated)
-
-    for _, row in df_points.iterrows():
-        x, y = int(row["x"]), int(row["y"])
-        draw.ellipse(
-            (x - radius, y - radius, x + radius, y + radius),
-            outline=color,
-            width=2,
-        )
-
-    return annotated
 
 
 def main():
@@ -94,7 +62,7 @@ def main():
     print(f"Predicted {len(df_pred)} positive pixels at threshold {args.threshold}.")
 
     # --- Draw predictions onto the original image ---
-    annotated_img = draw_points_on_image(img, df_pred, radius=3, color="red")
+    annotated_img = colony_count.draw_points_on_image(img, df_pred, radius=3, color="red")
 
     # --- Save annotated image as PNG ---
     annotated_img.save(args.output, format="PNG")

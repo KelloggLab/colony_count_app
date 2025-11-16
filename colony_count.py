@@ -3,6 +3,41 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from pulearn import ElkanotoPuClassifier
 import joblib
+from PIL import Image, ImageDraw
+
+
+def draw_points_on_image(img, df_points, radius=4, color="red"):
+    """
+    Draw circular markers for each (x, y) in df_points on a copy of img.
+
+    Parameters
+    ----------
+    img : PIL.Image
+        Base image (will not be modified in place).
+    df_points : DataFrame
+        Must contain columns 'x' and 'y'.
+    radius : int
+        Radius of the drawn circles.
+    color : str or tuple
+        Color for the circles.
+
+    Returns
+    -------
+    PIL.Image
+        Annotated image.
+    """
+    annotated = img.convert("RGB").copy()
+    draw = ImageDraw.Draw(annotated)
+
+    for _, row in df_points.iterrows():
+        x, y = int(row["x"]), int(row["y"])
+        draw.ellipse(
+            (x - radius, y - radius, x + radius, y + radius),
+            outline=color,
+            width=2,
+        )
+
+    return annotated
 
 def save_model(model, path):
     """
@@ -192,6 +227,125 @@ def extract_patches_from_points(img, points, patch_radius=4, flatten=True):
     return patches
 
 
+import numpy as np
+import cv2
+from PIL import Image
+
+
+def detect_plate_circle(
+    img,
+    diameter_ratio=0.9,
+    diameter_tolerance=0.15,
+    dp=1.2,
+    edge_blur_ksize=5,
+):
+    """
+    Detect a circular plate whose diameter is expected to be a fixed fraction
+    of the image size, using a Hough circle transform.
+
+    Parameters
+    ----------
+    img : PIL.Image or np.ndarray
+        Input image (RGB, BGR, or grayscale).
+    diameter_ratio : float
+        Expected diameter / min(image_width, image_height).
+        For example, 0.9 means the plate occupies ~90% of the smaller dimension.
+    diameter_tolerance : float
+        Fractional tolerance around the expected diameter.
+        The search radius range is:
+            R_expected * (1 - diameter_tolerance) -> minRadius
+            R_expected * (1 + diameter_tolerance) -> maxRadius
+    dp : float
+        Inverse ratio of the accumulator resolution to the image resolution
+        (HoughCircles parameter). 1.2 is a good default.
+    edge_blur_ksize : int
+        Kernel size for median blur applied before edge detection.
+
+    Returns
+    -------
+    (cx, cy, R) or None
+        Center (cx, cy) and radius R in pixel coordinates, or None if no circle found.
+    """
+    # Convert image to grayscale np.ndarray
+    if isinstance(img, Image.Image):
+        arr = np.array(img)
+    else:
+        arr = np.asarray(img)
+
+    if arr.ndim == 3:
+        # assume RGB
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr.astype(np.uint8)
+
+    # Basic smoothing to help edge detection
+    gray_blur = cv2.medianBlur(gray, edge_blur_ksize)
+
+    # Determine size-based parameters
+    h, w = gray_blur.shape[:2]
+    base_dim = min(h, w)
+
+    # Expected diameter and radius from ratio
+    expected_diameter = diameter_ratio * base_dim
+    expected_radius = expected_diameter / 2.0
+
+    # Radius search band based on tolerance
+    min_radius = int(expected_radius * (1.0 - diameter_tolerance))
+    max_radius = int(expected_radius * (1.0 + diameter_tolerance))
+
+    # Ensure they are valid
+    min_radius = max(1, min_radius)
+    if max_radius <= min_radius:
+        max_radius = min_radius + 5
+
+    # minDist: minimum distance between circle centers
+    # For a single plate, we can set this fairly large (e.g. half of base_dim)
+    min_dist = int(base_dim * 0.5)
+
+    # Hough parameters:
+    # param1 is the upper threshold for the internal Canny edge detector
+    param1 = 100
+
+    # param2 is the accumulator threshold for center detection.
+    # Grow it mildly with radius so larger circles require more supporting edges.
+    param2 = max(20, int(expected_radius * 0.05))
+
+    circles = cv2.HoughCircles(
+        gray_blur,
+        cv2.HOUGH_GRADIENT,
+        dp=dp,
+        minDist=min_dist,
+        param1=param1,
+        param2=param2,
+        minRadius=min_radius,
+        maxRadius=max_radius,
+    )
+
+    if circles is None:
+        return None
+
+    circles = np.squeeze(circles, axis=0)  # shape (N, 3): (x, y, r)
+
+    # Choose the largest circle (likely the plate)
+    idx = np.argmax(circles[:, 2])
+    x, y, r = circles[idx]
+
+    return float(x), float(y), float(r)
+
+
+def remove_edge_plate_points(df_points, cx, cy, R, edge_margin=10):
+    """
+    Keep only points that are at least `edge_margin` pixels inside
+    the plate (a circle of radius R centered at (cx, cy)).
+    """
+    df = df_points.copy()
+    dx = df["x"] - cx
+    dy = df["y"] - cy
+    r = np.sqrt(dx**2 + dy**2)
+    max_r = R - edge_margin
+    return df[r <= max_r].reset_index(drop=True)
+
+
 # -------------------------
 # Internal helper functions
 # -------------------------
@@ -317,6 +471,31 @@ def train(df_points, img, patch_radius=4, num_unlabeled=5000, random_state=42):
     return model
 
 
+def preprocess_for_circles(img, sigma=2.0, ksize=0):
+    """
+    Convert to grayscale and apply Gaussian low-pass filter.
+    img: PIL or ndarray (RGB or grayscale)
+    sigma: Gaussian sigma in pixels
+    ksize: kernel size; 0 lets OpenCV pick based on sigma
+    """
+    # to ndarray
+    if isinstance(img, Image.Image):
+        arr = np.array(img)
+    else:
+        arr = np.asarray(img)
+
+    # RGB → grayscale
+    if arr.ndim == 3:
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr.astype(np.uint8)
+
+    # Gaussian low-pass filter
+    # If ksize == 0, OpenCV infers a suitable kernel size from sigma
+    gray_blur = cv2.GaussianBlur(gray, (ksize or 0, ksize or 0), sigmaX=sigma)
+
+    return gray_blur
+
 def pick(img, model, threshold=0.9):
     """
     Apply the trained model to an image and return predicted feature coordinates.
@@ -350,5 +529,21 @@ def pick(img, model, threshold=0.9):
     # Threshold
     ys, xs = np.where(prob_map >= threshold)
     df_pred = pd.DataFrame({"x": xs.astype(int), "y": ys.astype(int)})
+    
+    #NOTE FIX THIS LATER
+    lpimg = preprocess_for_circles(img,4,0)
+    testout = Image.fromarray(lpimg)
+    testout.save('lowpass_img.png',format="PNG")
+    cx, cy, R = detect_plate_circle(lpimg)
+    print("Detected plate center & radius:", cx, cy, R)
 
-    return df_pred
+	# 2) Remove edge artifacts from your annotated or predicted points
+    df_clean = remove_edge_plate_points(df_pred, cx, cy, R, edge_margin=20)
+    #check
+    annotated_img = draw_points_on_image(img, df_pred, radius=3, color="green")
+    annotated_img = draw_points_on_image(annotated_img, df_clean, radius=3, color="red")
+    annotated_img.save('remove_edge_check.png', format="PNG")
+    #END
+    
+
+    return df_clean
