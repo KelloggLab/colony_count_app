@@ -35,7 +35,25 @@ def main():
         "--radius",
         type=int,
         default=4,
-        help="radius for patch extraction"),
+        help="radius for patch extraction"
+    )
+    parser.add_argument(
+        "--sigma",
+        type=int,
+        default=4,
+        help="sigma for low-pass filter for edge detection"
+    )
+    parser.add_argument(
+        "--diameter_ratio",
+        type=float,
+        default=0.9,
+        help="ratio of plate diameter to width of image. needed for edge detection"
+    )
+    parser.add_argument(
+        "--edge_margin",
+        type=int,
+        default=20,
+        help="margin for removal of edge picks, in pixels")   
 
     args = parser.parse_args()
 
@@ -58,7 +76,12 @@ def main():
 
     # --- Predict new features ---
     print("Predicting new features on the image...")
-    df_pred = colony_count.pick(img, model, threshold=args.threshold)
+    df_pred = colony_count.pick(img, 
+                                model,
+                                threshold=args.threshold,
+                                lowpass_sigma=args.sigma,
+                                edge_margin=args.edge_margin,
+                                diameter_ratio=args.diameter_ratio)
     print(f"Predicted {len(df_pred)} positive pixels at threshold {args.threshold}.")
 
     # --- Draw predictions onto the original image ---

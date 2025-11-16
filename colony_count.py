@@ -496,7 +496,7 @@ def preprocess_for_circles(img, sigma=2.0, ksize=0):
 
     return gray_blur
 
-def pick(img, model, threshold=0.9):
+def pick(img, model, threshold=0.9,lowpass_sigma=4,edge_margin=20,diameter_ratio=0.9):
     """
     Apply the trained model to an image and return predicted feature coordinates.
 
@@ -531,14 +531,14 @@ def pick(img, model, threshold=0.9):
     df_pred = pd.DataFrame({"x": xs.astype(int), "y": ys.astype(int)})
     
     #NOTE FIX THIS LATER
-    lpimg = preprocess_for_circles(img,4,0)
+    lpimg = preprocess_for_circles(img,lowpass_sigma,0)
     testout = Image.fromarray(lpimg)
     testout.save('lowpass_img.png',format="PNG")
-    cx, cy, R = detect_plate_circle(lpimg)
+    cx, cy, R = detect_plate_circle(lpimg,diameter_ratio)
     print("Detected plate center & radius:", cx, cy, R)
 
 	# 2) Remove edge artifacts from your annotated or predicted points
-    df_clean = remove_edge_plate_points(df_pred, cx, cy, R, edge_margin=20)
+    df_clean = remove_edge_plate_points(df_pred, cx, cy, R, edge_margin)
     #check
     annotated_img = draw_points_on_image(img, df_pred, radius=3, color="green")
     annotated_img = draw_points_on_image(annotated_img, df_clean, radius=3, color="red")
