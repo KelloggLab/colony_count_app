@@ -6,27 +6,27 @@ A lightweight web application for automated microbial colony counting.
 
 The colony_count_app streamlines microbiology workflows by automating colony counting from plate images. It provides:
 
-A simple browser-based interface (app.py)
+* A simple browser-based interface (app.py)
 
-Automated plate image processing and colony detection (colony_count.py)
+* Automated plate image processing and colony detection (colony_count.py)
 
-Optional model training for training sets, which requires plate images and manually picked points (i.e. positive labeled features) (train_all.py)
+* Optional model training for training sets, which requires plate images and manually picked points (i.e. positive labeled features) (train_all.py)
 
-Tools to test and refine detection accuracy
+* Tools to test and refine detection accuracy
 
 This reduces manual counting time, minimizes user bias, and increases experimental throughput.
 
 🔧 Features
 
-Upload a plate image and receive an instant colony count
+* Upload a plate image and receive an instant colony count
 
-Visualization of detected colonies
+* Visualization of detected colonies
 
-Exportable results
+* Exportable results
 
-Customizable training workflow for atypical plate images
+* Customizable training workflow for atypical plate images
 
-Minimal dependencies for easy installation in lab or HPC environments
+* Minimal dependencies for easy installation in lab or HPC environments
 
 🛠️ Installation
 
@@ -76,25 +76,25 @@ Download or record results.
 
 ✅ Requirements & Compatibility
 
-Python 3.8+
+* Python 3.8+
 
-macOS or Linux recommended (Windows untested)
+* macOS or Linux recommended (Windows untested)
 
-Standard modern browser (Chrome, Firefox)
+* Standard modern browser (Chrome, Firefox)
 
-Best performance with high-contrast plate images
+* Best performance with high-contrast plate images
 
 🚧 Current Limitations
 
-Dense/overlapping colonies may affect accuracy
+* Dense/overlapping colonies may affect accuracy
 
-Assumes approximately circular plates
+* Assumes approximately circular plates
 
-Lighting variation may require retraining or preprocessing
+* Lighting variation may require retraining or preprocessing
 
 Planned improvements:
 
-Development of Pre-trained models. 
+* Development of Pre-trained models. 
 
 👥 Contributing
 
