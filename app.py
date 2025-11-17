@@ -13,83 +13,84 @@ import colony_count
 #initialize colony_count model
 model = 0
 # --- Load image ---
-IMAGE_PATH = "training_set/test2.jpg"  # change this to your image
+#IMAGE_PATH = "training_set/test2.jpg"  # change this to your image
+IMAGE_PATH = st.file_uploader("plate image:", type=["jpg","png"])
 
-img = Image.open(IMAGE_PATH)
-# Resize to fit screen (e.g., max 1200px width)
-MAX_WIDTH = 1200
+if IMAGE_PATH is not None:
+	img = Image.open(IMAGE_PATH)
+	# Resize to fit screen (e.g., max 1200px width)
+	MAX_WIDTH = 1200
 
+	draw = ImageDraw.Draw(gh.rescale_image(img,MAX_WIDTH))
 
-draw = ImageDraw.Draw(gh.rescale_image(img,MAX_WIDTH))
+	# --- Initialize session state for points ---
+	if "points" not in st.session_state:
+		st.session_state.points = []  # list of dicts: {"x": ..., "y": ...}
 
-# --- Initialize session state for points ---
-if "points" not in st.session_state:
-    st.session_state.points = []  # list of dicts: {"x": ..., "y": ...}
-
-annotated = img.copy()
-annotated_img = img.copy()
-gh.draw_annotated_image(annotated,st)
-# --- Get click coordinates on the *annotated* image ---
-click = streamlit_image_coordinates(
-    annotated,              # NOTE: we now pass the annotated image
-    key="clickable-image",  # important so Streamlit tracks this widget
-)
-
-# If user clicked, store point
-if click is not None:
-    # click looks like {"x": int, "y": int, "time": float}
-    st.session_state.points.append({"x": click["x"], "y": click["y"]})
-
-st.write("Current points:", st.session_state.points)
-
-# --- Clear points button ---
-if st.button("Clear all points"):
-    st.session_state.points = []
-    st.experimental_rerun()
-
-
-if st.button("Train Model"):
-	df = pd.DataFrame(st.session_state.points)
-	model = colony_count.train(df,img)
-	colony_count.save_model(model,'trained_model.joblib')
-
-if st.button("Pick Using Model"):
-	model = colony_count.load_model('trained_model.joblib')
-	df = colony_count.pick(img,
-							model,
-							0.2,
-							2,
-							30,
-							0.9)
-	annotated_img = colony_count.draw_points_on_image(img, df, radius=3, color="red")
-	gh.draw_annotated_image(annotated_img,st)
+	annotated = img.copy()
+	annotated_img = img.copy()
+	gh.draw_annotated_image(annotated,st)
+	# --- Get click coordinates on the *annotated* image ---
 	click = streamlit_image_coordinates(
-    	annotated_img,              # NOTE: we now pass the annotated image
-    	key="clickable-image2",  # important so Streamlit tracks this widget
+    	annotated,              # NOTE: we now pass the annotated image
+    	key="clickable-image",  # important so Streamlit tracks this widget
 	)
-	st.title('number of colonies detected: '+str(len(df)))
+
+	# If user clicked, store point
+	if click is not None:
+		st.session_state.points.append({"x": click["x"], "y": click["y"]})
+
+	st.write("Current points:", st.session_state.points)
+
+	# --- Clear points button ---
+	if st.button("Clear all points"):
+		st.session_state.points = []
+		st.experimental_rerun()
 
 
-# --- Prepare downloads ---
-if st.session_state.points:
-    # 1) Download coordinates as CSV
-    df = pd.DataFrame(st.session_state.points)
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇️ Download coordinates (CSV)",
-        data=csv_bytes,
-        file_name="points.csv",
-        mime="text/csv",
-    )
+	if st.button("Train Model"):
+		df = pd.DataFrame(st.session_state.points)
+		model = colony_count.train(df,img)
+		colony_count.save_model(model,'trained_model.joblib')
 
-    # 2) Download annotated image as PNG
-    buf = io.BytesIO()
-    annotated_img.save(buf, format="PNG")
-    buf.seek(0)
-    st.download_button(
-        label="⬇️ Download annotated image (PNG)",
-        data=buf,
-        file_name="annotated_image.png",
-        mime="image/png",
-    )
+	if st.button("Pick Using Model"):
+		model = colony_count.load_model('trained_model.joblib')
+		df = colony_count.pick(img,
+								model,
+								0.2,
+								2,
+								30,
+								0.9)
+		annotated_img = colony_count.draw_points_on_image(img, df, radius=3, color="red")
+		gh.draw_annotated_image(annotated_img,st)
+		click = streamlit_image_coordinates(
+    		annotated_img,              # NOTE: we now pass the annotated image
+    		key="clickable-image2",  # important so Streamlit tracks this widget
+		)
+		st.title('number of colonies detected: '+str(len(df)))
 
+
+	# --- Prepare downloads ---
+	if st.session_state.points:
+		# 1) Download coordinates as CSV
+		df = pd.DataFrame(st.session_state.points)
+		csv_bytes = df.to_csv(index=False).encode("utf-8")
+		st.download_button(
+        	label="⬇️ Download coordinates (CSV)",
+        	data=csv_bytes,
+        	file_name="points.csv",
+        	mime="text/csv",
+    	)
+# 2) Download annotated image as PNG
+		buf = io.BytesIO()
+		annotated_img.save(buf, format="PNG")
+		buf.seek(0)
+		st.download_button(
+			label="⬇️ Download annotated image (PNG)",
+			data=buf,
+			file_name="annotated_image.png",
+			mime="image/png",
+			)
+
+else:
+	st.info("Please upload an image to begin.")
