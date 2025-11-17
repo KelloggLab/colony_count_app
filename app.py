@@ -27,6 +27,7 @@ if "points" not in st.session_state:
     st.session_state.points = []  # list of dicts: {"x": ..., "y": ...}
 
 annotated = img.copy()
+annotated_img = img.copy()
 gh.draw_annotated_image(annotated,st)
 # --- Get click coordinates on the *annotated* image ---
 click = streamlit_image_coordinates(
@@ -62,6 +63,12 @@ if st.button("Pick Using Model"):
 							0.9)
 	annotated_img = colony_count.draw_points_on_image(img, df, radius=3, color="red")
 	gh.draw_annotated_image(annotated_img,st)
+	click = streamlit_image_coordinates(
+    	annotated_img,              # NOTE: we now pass the annotated image
+    	key="clickable-image2",  # important so Streamlit tracks this widget
+	)
+	st.title('number of colonies detected: '+str(len(df)))
+
 
 # --- Prepare downloads ---
 if st.session_state.points:
@@ -77,7 +84,7 @@ if st.session_state.points:
 
     # 2) Download annotated image as PNG
     buf = io.BytesIO()
-    annotated.save(buf, format="PNG")
+    annotated_img.save(buf, format="PNG")
     buf.seek(0)
     st.download_button(
         label="⬇️ Download annotated image (PNG)",
