@@ -470,6 +470,112 @@ def train(df_points, img, patch_radius=4, num_unlabeled=5000, random_state=42):
     model = ColonyModel(pu_clf, patch_radius)
     return model
 
+def train_all(
+    images,
+    df_points_list,
+    patch_radius=4,
+    num_unlabeled_per_image=5000,
+    random_state=42,
+):
+    """
+    Train a single positive-unlabeled (PU) model from multiple images.
+
+    Parameters
+    ----------
+    images : list
+        List of PIL.Image or ndarray objects. Each image should correspond
+        to one entry in df_points_list.
+    df_points_list : list
+        List of pandas DataFrames, one per image, each with columns ["x", "y"]
+        containing annotated positive points for that image.
+    patch_radius : int
+        Radius of local neighborhood for each patch (2r+1 x 2r+1).
+    num_unlabeled_per_image : int
+        Number of unlabeled patches to sample from each image.
+    random_state : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    ColonyModel
+        A model trained across all provided images.
+    """
+    if len(images) != len(df_points_list):
+        raise ValueError("images and df_points_list must have the same length.")
+
+    rng = np.random.default_rng(random_state)
+
+    X_pos_list = []
+    X_unl_list = []
+
+    for img, df_points in zip(images, df_points_list):
+        # convert to grayscale
+        img_gray = _image_to_gray(img)
+        H, W = img_gray.shape
+
+        # positives for this image
+        pos_coords = [(int(row.x), int(row.y)) for _, row in df_points.iterrows()]
+        if len(pos_coords) == 0:
+            # skip images with no labeled positives
+            continue
+
+        X_pos_i = np.array([
+            _extract_patch(img_gray, x, y, patch_radius)
+            for (x, y) in pos_coords
+        ])
+        X_pos_list.append(X_pos_i)
+
+        # unlabeled for this image
+        all_coords = [(x, y) for y in range(H) for x in range(W)]
+        pos_set = set(pos_coords)
+        unlabeled_candidates = [(x, y) for (x, y) in all_coords if (x, y) not in pos_set]
+
+        n_unl = min(num_unlabeled_per_image, len(unlabeled_candidates))
+        if n_unl <= 0:
+            continue
+
+        idxs = rng.choice(len(unlabeled_candidates), size=n_unl, replace=False)
+        unl_coords = [unlabeled_candidates[i] for i in idxs]
+
+        X_unl_i = np.array([
+            _extract_patch(img_gray, x, y, patch_radius)
+            for (x, y) in unl_coords
+        ])
+        X_unl_list.append(X_unl_i)
+
+    if not X_pos_list:
+        raise ValueError("No positive patches collected; check your annotations.")
+
+    # combine across all images
+    X_pos = np.vstack(X_pos_list)
+    X_unl = np.vstack(X_unl_list)
+
+    # labels: 1 for positives, 0 for unlabeled
+    X_train = np.vstack([X_pos, X_unl])
+    y_train = np.hstack([
+        np.ones(X_pos.shape[0]),
+        np.zeros(X_unl.shape[0]),
+    ])
+
+    # base classifier
+    base_clf = RandomForestClassifier(
+        n_estimators=100,
+        n_jobs=-1,
+        random_state=random_state,
+    )
+
+    # PU wrapper (same as in train)
+    pu_clf = ElkanotoPuClassifier(
+        estimator=base_clf,
+        hold_out_ratio=0.2,
+        random_state=random_state,
+    )
+    pu_clf.fit(X_train, y_train)
+
+    # wrap in ColonyModel
+    model = ColonyModel(pu_clf, patch_radius)
+    return model
+
 
 def preprocess_for_circles(img, sigma=2.0, ksize=0):
     """
@@ -499,6 +605,67 @@ def preprocess_for_circles(img, sigma=2.0, ksize=0):
 import numpy as np
 import pandas as pd
 from sklearn.cluster import DBSCAN
+
+from PIL import Image, ImageDraw
+
+def draw_detected_circle_on_png(
+    img,
+    cx,
+    cy,
+    R,
+    color="red",
+    width=4,
+):
+    """
+    Draw a circle on a PNG file using center (cx, cy) and radius R, then save.
+
+    Parameters
+    ----------
+    input_path : str
+        Path to the input image file (e.g. original plate image).
+    cx, cy : float or int
+        Center of the detected circle in pixel coordinates.
+    R : float or int
+        Radius of the detected circle in pixels.
+    output_path : str
+        Path to save the annotated PNG.
+    color : str or tuple
+        Outline color for the circle (e.g. 'red', (255, 0, 0)).
+    width : int
+        Line width of the circle outline.
+    """
+
+    # Ensure ints
+    cx = int(round(cx))
+    cy = int(round(cy))
+    R = int(round(R))
+
+    # Create drawing context
+    annotated = img.copy()
+    draw = ImageDraw.Draw(annotated)
+
+    # Bounding box for the circle
+    left   = cx - R
+    top    = cy - R
+    right  = cx + R
+    bottom = cy + R
+
+    # Draw the circle (ellipse with equal width/height)
+    draw.ellipse(
+        (left, top, right, bottom),
+        outline=color,
+        width=width,
+    )
+
+    # Optionally mark center
+    center_radius = max(2, width)
+    draw.ellipse(
+        (cx - center_radius, cy - center_radius,
+         cx + center_radius, cy + center_radius),
+        fill=color,
+    )
+
+    return annotated
 
 
 def merge_overlapping_predictions(df_points, min_distance=5):
@@ -615,6 +782,7 @@ def pick(img, model, threshold=0.9,lowpass_sigma=4,edge_margin=20,diameter_ratio
     annotated_img = draw_points_on_image(img, df_pred, radius=3, color="green")
     annotated_img = draw_points_on_image(annotated_img, df_clean, radius=3, color="red")
     annotated_img = draw_points_on_image(annotated_img, df_uniq, radius=3, color="blue")
+    annotated_img = draw_detected_circle_on_png(annotated_img,cx,cy,R,color="yellow",width=4)
     annotated_img.save('remove_edge_check.png', format="PNG")
     #END
 

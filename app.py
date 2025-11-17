@@ -13,7 +13,7 @@ import colony_count
 #initialize colony_count model
 model = 0
 # --- Load image ---
-IMAGE_PATH = "training_set/test1.jpg"  # change this to your image
+IMAGE_PATH = "training_set/test2.jpg"  # change this to your image
 
 img = Image.open(IMAGE_PATH)
 # Resize to fit screen (e.g., max 1200px width)
@@ -50,10 +50,18 @@ if st.button("Clear all points"):
 if st.button("Train Model"):
 	df = pd.DataFrame(st.session_state.points)
 	model = colony_count.train(df,img)
+	colony_count.save_model(model,'trained_model.joblib')
 
 if st.button("Pick Using Model"):
-	print("empty")
-#	df = colony_count.pick(img,model)
+	model = colony_count.load_model('trained_model.joblib')
+	df = colony_count.pick(img,
+							model,
+							0.2,
+							2,
+							30,
+							0.9)
+	annotated_img = colony_count.draw_points_on_image(img, df, radius=3, color="red")
+	gh.draw_annotated_image(annotated_img,st)
 
 # --- Prepare downloads ---
 if st.session_state.points:
