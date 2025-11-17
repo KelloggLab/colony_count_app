@@ -63,6 +63,7 @@ Download or record results.
 (Optional) Train the model using your labels and the training_set/ directory for improved accuracy on non-standard plates.
 
 📁 Repository Structure
+```
 /
 ├── app.py                 # Web application entry point
 ├── colony_count.py        # Core colony detection logic
@@ -73,6 +74,7 @@ Download or record results.
 ├── example.jpg/.png       # Example images for quick testing
 ├── environment.yml        # Conda environment file
 └── README.md              # This README
+```
 
 ✅ Requirements & Compatibility
 
