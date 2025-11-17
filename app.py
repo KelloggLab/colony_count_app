@@ -47,20 +47,49 @@ if IMAGE_PATH is not None:
 		st.session_state.points = []
 		st.experimental_rerun()
 
-
+	radius = st.number_input(
+		"size of patch for feature extraction (pixels): ",
+		min_value=1,
+		max_value=20,
+		value=4)
+	
 	if st.button("Train Model"):
 		df = pd.DataFrame(st.session_state.points)
 		model = colony_count.train(df,img)
 		colony_count.save_model(model,'trained_model.joblib')
+	
+	threshold = st.number_input(
+		"threshold for predictions: ",
+		min_value=0.0,
+		max_value=1.0,
+		value=0.2)
+
+	sigma = st.number_input(
+		"sigma for gaussian filter (for plate edge detection): ",
+		min_value=0.0,
+		max_value=10.0,
+		value=2.0)
+		
+	edge_margin = st.number_input(
+		"edge margin for removal of points, in pixels: ",
+		min_value=1,
+		max_value=50,
+		value=30)
+		
+	diameter_ratio = st.number_input(
+		"ratio of diameter of plate / image width: ",
+		min_value=0.01,
+		max_value=1.0,
+		value=0.9)
 
 	if st.button("Pick Using Model"):
 		model = colony_count.load_model('trained_model.joblib')
 		df = colony_count.pick(img,
 								model,
-								0.2,
-								2,
-								30,
-								0.9)
+								threshold,
+								sigma,
+								edge_margin,
+								diameter_ratio)
 		annotated_img = colony_count.draw_points_on_image(img, df, radius=3, color="red")
 		gh.draw_annotated_image(annotated_img,st)
 		click = streamlit_image_coordinates(
