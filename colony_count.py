@@ -496,6 +496,76 @@ def preprocess_for_circles(img, sigma=2.0, ksize=0):
 
     return gray_blur
 
+import numpy as np
+import pandas as pd
+from sklearn.cluster import DBSCAN
+
+
+def merge_overlapping_predictions(df_points, min_distance=5):
+    """
+    Merge overlapping / nearby predicted points into a single representative point.
+
+    Parameters
+    ----------
+    df_points : pandas.DataFrame
+        Must contain at least columns 'x' and 'y'.
+        Optionally may contain 'prob' (prediction score).
+    min_distance : float
+        Maximum distance (in pixels) between points to be considered
+        part of the same cluster. Roughly corresponds to colony radius.
+
+    Returns
+    -------
+    pandas.DataFrame
+        New DataFrame with merged points (columns 'x', 'y', and any
+        other columns that make sense to keep per representative).
+        If 'prob' is present, the representative is the point with
+        the highest prob in each cluster; otherwise, the centroid.
+    """
+    if df_points.empty:
+        return df_points.copy()
+
+    if not {"x", "y"}.issubset(df_points.columns):
+        raise ValueError("df_points must contain 'x' and 'y' columns.")
+
+    coords = df_points[["x", "y"]].to_numpy()
+
+    # Cluster points by spatial proximity
+    clustering = DBSCAN(
+        eps=min_distance,  # maximum distance between neighbors
+        min_samples=1,     # every point belongs to some cluster
+        metric="euclidean",
+    ).fit(coords)
+
+    labels = clustering.labels_
+    df_points = df_points.copy()
+    df_points["cluster"] = labels
+
+    merged_rows = []
+
+    has_prob = "prob" in df_points.columns
+
+    for cluster_id, group in df_points.groupby("cluster"):
+        if has_prob:
+            # Keep the point with the highest probability
+            idx_max = group["prob"].idxmax()
+            rep = group.loc[idx_max].copy()
+        else:
+            # Use centroid of the cluster
+            cx = group["x"].mean()
+            cy = group["y"].mean()
+            rep = group.iloc[0].copy()
+            rep["x"] = int(round(cx))
+            rep["y"] = int(round(cy))
+
+        # drop the cluster label from the output row
+        rep = rep.drop(labels=["cluster"])
+        merged_rows.append(rep)
+
+    merged_df = pd.DataFrame(merged_rows).reset_index(drop=True)
+    return merged_df
+
+
 def pick(img, model, threshold=0.9,lowpass_sigma=4,edge_margin=20,diameter_ratio=0.9):
     """
     Apply the trained model to an image and return predicted feature coordinates.
@@ -539,11 +609,13 @@ def pick(img, model, threshold=0.9,lowpass_sigma=4,edge_margin=20,diameter_ratio
 
 	# 2) Remove edge artifacts from your annotated or predicted points
     df_clean = remove_edge_plate_points(df_pred, cx, cy, R, edge_margin)
+    df_uniq = merge_overlapping_predictions(df_clean,5) #min_distance in pixels
+
     #check
     annotated_img = draw_points_on_image(img, df_pred, radius=3, color="green")
     annotated_img = draw_points_on_image(annotated_img, df_clean, radius=3, color="red")
+    annotated_img = draw_points_on_image(annotated_img, df_uniq, radius=3, color="blue")
     annotated_img.save('remove_edge_check.png', format="PNG")
     #END
-    
 
-    return df_clean
+    return df_uniq

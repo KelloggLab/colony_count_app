@@ -13,7 +13,7 @@ import colony_count
 #initialize colony_count model
 model = 0
 # --- Load image ---
-IMAGE_PATH = "example2.png"  # change this to your image
+IMAGE_PATH = "training_set/test1.jpg"  # change this to your image
 
 img = Image.open(IMAGE_PATH)
 # Resize to fit screen (e.g., max 1200px width)
