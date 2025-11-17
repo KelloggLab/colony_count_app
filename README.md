@@ -32,20 +32,23 @@ Minimal dependencies for easy installation in lab or HPC environments
 
 Clone the repository:
 
+```
 git clone https://github.com/KelloggLab/colony_count_app.git
 cd colony_count_app
-
+```
 
 Create the conda environment:
 
+```
 conda env create -f environment.yml
 conda activate colony_count_app
-
+```
 
 Launch the app:
 
+```
 streamlit run app.py
-
+```
 
 🎯 Usage
 
