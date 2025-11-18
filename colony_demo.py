@@ -4,38 +4,6 @@ from PIL import Image, ImageDraw
 import colony_count
 
 
-def draw_points_on_image(img, df_points, radius=4, color="red"):
-    """
-    Draw circular markers for each (x, y) in df_points on a copy of img.
-
-    Parameters
-    ----------
-    img : PIL.Image
-        Base image (will not be modified in place).
-    df_points : DataFrame
-        Must contain columns 'x' and 'y'.
-    radius : int
-        Radius of the drawn circles.
-    color : str or tuple
-        Color for the circles.
-
-    Returns
-    -------
-    PIL.Image
-        Annotated image.
-    """
-    annotated = img.convert("RGB").copy()
-    draw = ImageDraw.Draw(annotated)
-
-    for _, row in df_points.iterrows():
-        x, y = int(row["x"]), int(row["y"])
-        draw.ellipse(
-            (x - radius, y - radius, x + radius, y + radius),
-            outline=color,
-            width=2,
-        )
-
-    return annotated
 
 
 def main():
@@ -63,6 +31,29 @@ def main():
         default=0.9,
         help="Probability threshold for calling positives (default: 0.9)",
     )
+    parser.add_argument(
+        "--radius",
+        type=int,
+        default=4,
+        help="radius for patch extraction"
+    )
+    parser.add_argument(
+        "--sigma",
+        type=int,
+        default=4,
+        help="sigma for low-pass filter for edge detection"
+    )
+    parser.add_argument(
+        "--diameter_ratio",
+        type=float,
+        default=0.9,
+        help="ratio of plate diameter to width of image. needed for edge detection"
+    )
+    parser.add_argument(
+        "--edge_margin",
+        type=int,
+        default=20,
+        help="margin for removal of edge picks, in pixels")   
 
     args = parser.parse_args()
 
@@ -80,16 +71,21 @@ def main():
 
     # --- Train model ---
     print("Training model...")
-    model = colony_count.train(df_points, img)
+    model = colony_count.train(df_points, img,args.radius)
     print(f"Model trained. is_valid(): {model.is_valid()}")
 
     # --- Predict new features ---
     print("Predicting new features on the image...")
-    df_pred = colony_count.pick(img, model, threshold=args.threshold)
+    df_pred = colony_count.pick(img, 
+                                model,
+                                threshold=args.threshold,
+                                lowpass_sigma=args.sigma,
+                                edge_margin=args.edge_margin,
+                                diameter_ratio=args.diameter_ratio)
     print(f"Predicted {len(df_pred)} positive pixels at threshold {args.threshold}.")
 
     # --- Draw predictions onto the original image ---
-    annotated_img = draw_points_on_image(img, df_pred, radius=3, color="red")
+    annotated_img = colony_count.draw_points_on_image(img, df_pred, radius=3, color="red")
 
     # --- Save annotated image as PNG ---
     annotated_img.save(args.output, format="PNG")

@@ -2,6 +2,348 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from pulearn import ElkanotoPuClassifier
+import joblib
+from PIL import Image, ImageDraw
+
+
+def draw_points_on_image(img, df_points, radius=4, color="red"):
+    """
+    Draw circular markers for each (x, y) in df_points on a copy of img.
+
+    Parameters
+    ----------
+    img : PIL.Image
+        Base image (will not be modified in place).
+    df_points : DataFrame
+        Must contain columns 'x' and 'y'.
+    radius : int
+        Radius of the drawn circles.
+    color : str or tuple
+        Color for the circles.
+
+    Returns
+    -------
+    PIL.Image
+        Annotated image.
+    """
+    annotated = img.convert("RGB").copy()
+    draw = ImageDraw.Draw(annotated)
+
+    for _, row in df_points.iterrows():
+        x, y = int(row["x"]), int(row["y"])
+        draw.ellipse(
+            (x - radius, y - radius, x + radius, y + radius),
+            outline=color,
+            width=2,
+        )
+
+    return annotated
+
+def save_model(model, path):
+    """
+    Save a trained ColonyModel to disk.
+
+    Parameters
+    ----------
+    model : ColonyModel
+        The trained model returned by train().
+    path : str or Path
+        File path to save the model (e.g. 'colony_model.joblib').
+    """
+    obj = {
+        "patch_radius": model.patch_radius,
+        "classifier": model.classifier,
+        "_is_trained": model._is_trained,
+    }
+    joblib.dump(obj, path)
+
+
+def load_model(path):
+    """
+    Load a ColonyModel from disk.
+
+    Parameters
+    ----------
+    path : str or Path
+        File path where the model was saved.
+
+    Returns
+    -------
+    ColonyModel
+        A restored model instance with the same classifier and settings.
+    """
+    obj = joblib.load(path)
+    model = ColonyModel(
+        classifier=obj["classifier"],
+        patch_radius=obj["patch_radius"],
+    )
+    # restore training flag if present
+    if "_is_trained" in obj:
+        model._is_trained = obj["_is_trained"]
+    return model
+    
+import math
+import numpy as np
+from PIL import Image
+
+
+def save_patch_gallery(patches, out_path, patch_radius=None, n_cols=10, pad=2):
+    """
+    Create a gallery image of patches and save as a single PNG.
+
+    Parameters
+    ----------
+    patches : np.ndarray
+        Array of shape (N, H, W) or (N, D).
+        If (N, D), patches are assumed to be flattened square patches.
+    out_path : str or Path
+        Where to save the gallery image (e.g. 'patch_gallery.png').
+    patch_radius : int or None
+        If patches are flattened (N, D), and this is provided, patch size
+        is taken as (2*patch_radius+1). If None, size is inferred as sqrt(D).
+    n_cols : int
+        Number of columns in the gallery grid.
+    pad : int
+        Padding (in pixels) between patches.
+    """
+    patches = np.asarray(patches)
+    N = patches.shape[0]
+
+    if N == 0:
+        raise ValueError("No patches provided to save_patch_gallery.")
+
+    # --- reshape to (N, H, W) if needed ---
+    if patches.ndim == 2:
+        # patches are flattened: (N, D)
+        D = patches.shape[1]
+
+        if patch_radius is not None:
+            size = 2 * patch_radius + 1
+            expected_D = size * size
+            if D != expected_D:
+                raise ValueError(
+                    f"Patch dimension {D} does not match radius {patch_radius} "
+                    f"(expected {expected_D})."
+                )
+        else:
+            size = int(math.sqrt(D))
+            if size * size != D:
+                raise ValueError(
+                    "Cannot infer square patch size from flattened dimension "
+                    f"{D}. Provide patch_radius explicitly."
+                )
+
+        patches_reshaped = patches.reshape(N, size, size)
+    elif patches.ndim == 3:
+        # already (N, H, W)
+        patches_reshaped = patches
+        size = patches.shape[1]  # assume square
+    else:
+        raise ValueError(
+            f"Unsupported patches shape {patches.shape}. "
+            "Expected (N, D) or (N, H, W)."
+        )
+
+    H, W = patches_reshaped.shape[1], patches_reshaped.shape[2]
+
+    # --- normalize to 0–255 and convert to uint8 for display ---
+    pmin = patches_reshaped.min()
+    pmax = patches_reshaped.max()
+    if pmax > pmin:
+        norm = (patches_reshaped - pmin) / (pmax - pmin)
+    else:
+        norm = np.zeros_like(patches_reshaped)
+    norm_uint8 = (norm * 255).astype(np.uint8)
+
+    # --- compute grid layout ---
+    n_rows = math.ceil(N / n_cols)
+
+    gallery_width = n_cols * W + (n_cols + 1) * pad
+    gallery_height = n_rows * H + (n_rows + 1) * pad
+
+    # single-channel (grayscale) gallery image
+    gallery = Image.new("L", (gallery_width, gallery_height), color=0)
+
+    # --- paste patches into the gallery ---
+    idx = 0
+    for row in range(n_rows):
+        for col in range(n_cols):
+            if idx >= N:
+                break
+            patch_img = Image.fromarray(norm_uint8[idx])
+            x0 = pad + col * (W + pad)
+            y0 = pad + row * (H + pad)
+            gallery.paste(patch_img, (x0, y0))
+            idx += 1
+
+    # --- save to disk ---
+    gallery.save(out_path, format="PNG")
+    return gallery  # also return the PIL image in case you want to inspect it
+
+
+
+def extract_patches_from_points(img, points, patch_radius=4, flatten=True):
+    """
+    Extract patches from an image at given (x, y) coordinates.
+
+    Parameters
+    ----------
+    img : PIL.Image or ndarray
+        Input image. Will be converted to grayscale internally.
+    points : pandas.DataFrame or iterable of (x, y)
+        If a DataFrame, must contain columns 'x' and 'y'.
+        Otherwise, can be any iterable of (x, y) pairs.
+    patch_radius : int
+        Radius r of the patch. Each patch is (2r+1) x (2r+1).
+    flatten : bool
+        If True, returns patches flattened to shape (N, D),
+        where D = (2r+1)^2. If False, returns (N, H, W).
+
+    Returns
+    -------
+    np.ndarray
+        Array of patches, either (N, D) if flatten=True or (N, H, W) otherwise.
+        This can be passed directly to `save_patch_gallery`.
+    """
+    img_gray = _image_to_gray(img)
+
+    # Normalize points input to a list of (x, y)
+    if hasattr(points, "iterrows"):  # likely a DataFrame
+        coords = [(int(row.x), int(row.y)) for _, row in points.iterrows()]
+    else:
+        coords = [(int(x), int(y)) for (x, y) in points]
+
+    size = 2 * patch_radius + 1
+
+    patches = []
+    for (x, y) in coords:
+        patch_flat = _extract_patch(img_gray, x, y, patch_radius=patch_radius)
+        if flatten:
+            patches.append(patch_flat)
+        else:
+            patches.append(patch_flat.reshape(size, size))
+
+    patches = np.array(patches)
+    return patches
+
+
+import numpy as np
+import cv2
+from PIL import Image
+
+
+def detect_plate_circle(
+    img,
+    diameter_ratio=0.9,
+    diameter_tolerance=0.15,
+    dp=1.2,
+    edge_blur_ksize=5,
+):
+    """
+    Detect a circular plate whose diameter is expected to be a fixed fraction
+    of the image size, using a Hough circle transform.
+
+    Parameters
+    ----------
+    img : PIL.Image or np.ndarray
+        Input image (RGB, BGR, or grayscale).
+    diameter_ratio : float
+        Expected diameter / min(image_width, image_height).
+        For example, 0.9 means the plate occupies ~90% of the smaller dimension.
+    diameter_tolerance : float
+        Fractional tolerance around the expected diameter.
+        The search radius range is:
+            R_expected * (1 - diameter_tolerance) -> minRadius
+            R_expected * (1 + diameter_tolerance) -> maxRadius
+    dp : float
+        Inverse ratio of the accumulator resolution to the image resolution
+        (HoughCircles parameter). 1.2 is a good default.
+    edge_blur_ksize : int
+        Kernel size for median blur applied before edge detection.
+
+    Returns
+    -------
+    (cx, cy, R) or None
+        Center (cx, cy) and radius R in pixel coordinates, or None if no circle found.
+    """
+    # Convert image to grayscale np.ndarray
+    if isinstance(img, Image.Image):
+        arr = np.array(img)
+    else:
+        arr = np.asarray(img)
+
+    if arr.ndim == 3:
+        # assume RGB
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr.astype(np.uint8)
+
+    # Basic smoothing to help edge detection
+    gray_blur = cv2.medianBlur(gray, edge_blur_ksize)
+
+    # Determine size-based parameters
+    h, w = gray_blur.shape[:2]
+    base_dim = min(h, w)
+
+    # Expected diameter and radius from ratio
+    expected_diameter = diameter_ratio * base_dim
+    expected_radius = expected_diameter / 2.0
+
+    # Radius search band based on tolerance
+    min_radius = int(expected_radius * (1.0 - diameter_tolerance))
+    max_radius = int(expected_radius * (1.0 + diameter_tolerance))
+
+    # Ensure they are valid
+    min_radius = max(1, min_radius)
+    if max_radius <= min_radius:
+        max_radius = min_radius + 5
+
+    # minDist: minimum distance between circle centers
+    # For a single plate, we can set this fairly large (e.g. half of base_dim)
+    min_dist = int(base_dim * 0.5)
+
+    # Hough parameters:
+    # param1 is the upper threshold for the internal Canny edge detector
+    param1 = 100
+
+    # param2 is the accumulator threshold for center detection.
+    # Grow it mildly with radius so larger circles require more supporting edges.
+    param2 = max(20, int(expected_radius * 0.05))
+
+    circles = cv2.HoughCircles(
+        gray_blur,
+        cv2.HOUGH_GRADIENT,
+        dp=dp,
+        minDist=min_dist,
+        param1=param1,
+        param2=param2,
+        minRadius=min_radius,
+        maxRadius=max_radius,
+    )
+
+    if circles is None:
+        return None
+
+    circles = np.squeeze(circles, axis=0)  # shape (N, 3): (x, y, r)
+
+    # Choose the largest circle (likely the plate)
+    idx = np.argmax(circles[:, 2])
+    x, y, r = circles[idx]
+
+    return float(x), float(y), float(r)
+
+
+def remove_edge_plate_points(df_points, cx, cy, R, edge_margin=10):
+    """
+    Keep only points that are at least `edge_margin` pixels inside
+    the plate (a circle of radius R centered at (cx, cy)).
+    """
+    df = df_points.copy()
+    dx = df["x"] - cx
+    dy = df["y"] - cy
+    r = np.sqrt(dx**2 + dy**2)
+    max_r = R - edge_margin
+    return df[r <= max_r].reset_index(drop=True)
 
 
 # -------------------------
@@ -128,8 +470,270 @@ def train(df_points, img, patch_radius=4, num_unlabeled=5000, random_state=42):
     model = ColonyModel(pu_clf, patch_radius)
     return model
 
+def train_all(
+    images,
+    df_points_list,
+    patch_radius=4,
+    num_unlabeled_per_image=5000,
+    random_state=42,
+):
+    """
+    Train a single positive-unlabeled (PU) model from multiple images.
 
-def pick(img, model, threshold=0.9):
+    Parameters
+    ----------
+    images : list
+        List of PIL.Image or ndarray objects. Each image should correspond
+        to one entry in df_points_list.
+    df_points_list : list
+        List of pandas DataFrames, one per image, each with columns ["x", "y"]
+        containing annotated positive points for that image.
+    patch_radius : int
+        Radius of local neighborhood for each patch (2r+1 x 2r+1).
+    num_unlabeled_per_image : int
+        Number of unlabeled patches to sample from each image.
+    random_state : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    ColonyModel
+        A model trained across all provided images.
+    """
+    if len(images) != len(df_points_list):
+        raise ValueError("images and df_points_list must have the same length.")
+
+    rng = np.random.default_rng(random_state)
+
+    X_pos_list = []
+    X_unl_list = []
+
+    for img, df_points in zip(images, df_points_list):
+        # convert to grayscale
+        img_gray = _image_to_gray(img)
+        H, W = img_gray.shape
+
+        # positives for this image
+        pos_coords = [(int(row.x), int(row.y)) for _, row in df_points.iterrows()]
+        if len(pos_coords) == 0:
+            # skip images with no labeled positives
+            continue
+
+        X_pos_i = np.array([
+            _extract_patch(img_gray, x, y, patch_radius)
+            for (x, y) in pos_coords
+        ])
+        X_pos_list.append(X_pos_i)
+
+        # unlabeled for this image
+        all_coords = [(x, y) for y in range(H) for x in range(W)]
+        pos_set = set(pos_coords)
+        unlabeled_candidates = [(x, y) for (x, y) in all_coords if (x, y) not in pos_set]
+
+        n_unl = min(num_unlabeled_per_image, len(unlabeled_candidates))
+        if n_unl <= 0:
+            continue
+
+        idxs = rng.choice(len(unlabeled_candidates), size=n_unl, replace=False)
+        unl_coords = [unlabeled_candidates[i] for i in idxs]
+
+        X_unl_i = np.array([
+            _extract_patch(img_gray, x, y, patch_radius)
+            for (x, y) in unl_coords
+        ])
+        X_unl_list.append(X_unl_i)
+
+    if not X_pos_list:
+        raise ValueError("No positive patches collected; check your annotations.")
+
+    # combine across all images
+    X_pos = np.vstack(X_pos_list)
+    X_unl = np.vstack(X_unl_list)
+
+    # labels: 1 for positives, 0 for unlabeled
+    X_train = np.vstack([X_pos, X_unl])
+    y_train = np.hstack([
+        np.ones(X_pos.shape[0]),
+        np.zeros(X_unl.shape[0]),
+    ])
+
+    # base classifier
+    base_clf = RandomForestClassifier(
+        n_estimators=100,
+        n_jobs=-1,
+        random_state=random_state,
+    )
+
+    # PU wrapper (same as in train)
+    pu_clf = ElkanotoPuClassifier(
+        estimator=base_clf,
+        hold_out_ratio=0.2,
+        random_state=random_state,
+    )
+    pu_clf.fit(X_train, y_train)
+
+    # wrap in ColonyModel
+    model = ColonyModel(pu_clf, patch_radius)
+    return model
+
+
+def preprocess_for_circles(img, sigma=2.0, ksize=0):
+    """
+    Convert to grayscale and apply Gaussian low-pass filter.
+    img: PIL or ndarray (RGB or grayscale)
+    sigma: Gaussian sigma in pixels
+    ksize: kernel size; 0 lets OpenCV pick based on sigma
+    """
+    # to ndarray
+    if isinstance(img, Image.Image):
+        arr = np.array(img)
+    else:
+        arr = np.asarray(img)
+
+    # RGB → grayscale
+    if arr.ndim == 3:
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr.astype(np.uint8)
+
+    # Gaussian low-pass filter
+    # If ksize == 0, OpenCV infers a suitable kernel size from sigma
+    gray_blur = cv2.GaussianBlur(gray, (ksize or 0, ksize or 0), sigmaX=sigma)
+
+    return gray_blur
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import DBSCAN
+
+from PIL import Image, ImageDraw
+
+def draw_detected_circle_on_png(
+    img,
+    cx,
+    cy,
+    R,
+    color="red",
+    width=4,
+):
+    """
+    Draw a circle on a PNG file using center (cx, cy) and radius R, then save.
+
+    Parameters
+    ----------
+    input_path : str
+        Path to the input image file (e.g. original plate image).
+    cx, cy : float or int
+        Center of the detected circle in pixel coordinates.
+    R : float or int
+        Radius of the detected circle in pixels.
+    output_path : str
+        Path to save the annotated PNG.
+    color : str or tuple
+        Outline color for the circle (e.g. 'red', (255, 0, 0)).
+    width : int
+        Line width of the circle outline.
+    """
+
+    # Ensure ints
+    cx = int(round(cx))
+    cy = int(round(cy))
+    R = int(round(R))
+
+    # Create drawing context
+    annotated = img.copy()
+    draw = ImageDraw.Draw(annotated)
+
+    # Bounding box for the circle
+    left   = cx - R
+    top    = cy - R
+    right  = cx + R
+    bottom = cy + R
+
+    # Draw the circle (ellipse with equal width/height)
+    draw.ellipse(
+        (left, top, right, bottom),
+        outline=color,
+        width=width,
+    )
+
+    # Optionally mark center
+    center_radius = max(2, width)
+    draw.ellipse(
+        (cx - center_radius, cy - center_radius,
+         cx + center_radius, cy + center_radius),
+        fill=color,
+    )
+
+    return annotated
+
+
+def merge_overlapping_predictions(df_points, min_distance=5):
+    """
+    Merge overlapping / nearby predicted points into a single representative point.
+
+    Parameters
+    ----------
+    df_points : pandas.DataFrame
+        Must contain at least columns 'x' and 'y'.
+        Optionally may contain 'prob' (prediction score).
+    min_distance : float
+        Maximum distance (in pixels) between points to be considered
+        part of the same cluster. Roughly corresponds to colony radius.
+
+    Returns
+    -------
+    pandas.DataFrame
+        New DataFrame with merged points (columns 'x', 'y', and any
+        other columns that make sense to keep per representative).
+        If 'prob' is present, the representative is the point with
+        the highest prob in each cluster; otherwise, the centroid.
+    """
+    if df_points.empty:
+        return df_points.copy()
+
+    if not {"x", "y"}.issubset(df_points.columns):
+        raise ValueError("df_points must contain 'x' and 'y' columns.")
+
+    coords = df_points[["x", "y"]].to_numpy()
+
+    # Cluster points by spatial proximity
+    clustering = DBSCAN(
+        eps=min_distance,  # maximum distance between neighbors
+        min_samples=1,     # every point belongs to some cluster
+        metric="euclidean",
+    ).fit(coords)
+
+    labels = clustering.labels_
+    df_points = df_points.copy()
+    df_points["cluster"] = labels
+
+    merged_rows = []
+
+    has_prob = "prob" in df_points.columns
+
+    for cluster_id, group in df_points.groupby("cluster"):
+        if has_prob:
+            # Keep the point with the highest probability
+            idx_max = group["prob"].idxmax()
+            rep = group.loc[idx_max].copy()
+        else:
+            # Use centroid of the cluster
+            cx = group["x"].mean()
+            cy = group["y"].mean()
+            rep = group.iloc[0].copy()
+            rep["x"] = int(round(cx))
+            rep["y"] = int(round(cy))
+
+        # drop the cluster label from the output row
+        rep = rep.drop(labels=["cluster"])
+        merged_rows.append(rep)
+
+    merged_df = pd.DataFrame(merged_rows).reset_index(drop=True)
+    return merged_df
+
+
+def pick(img, model, threshold=0.9,lowpass_sigma=4,edge_margin=20,diameter_ratio=0.9):
     """
     Apply the trained model to an image and return predicted feature coordinates.
 
@@ -162,5 +766,24 @@ def pick(img, model, threshold=0.9):
     # Threshold
     ys, xs = np.where(prob_map >= threshold)
     df_pred = pd.DataFrame({"x": xs.astype(int), "y": ys.astype(int)})
+    
+    #NOTE FIX THIS LATER
+    lpimg = preprocess_for_circles(img,lowpass_sigma,0)
+    testout = Image.fromarray(lpimg)
+    testout.save('lowpass_img.png',format="PNG")
+    cx, cy, R = detect_plate_circle(lpimg,diameter_ratio)
+    print("Detected plate center & radius:", cx, cy, R)
 
-    return df_pred
+	# 2) Remove edge artifacts from your annotated or predicted points
+    df_clean = remove_edge_plate_points(df_pred, cx, cy, R, edge_margin)
+    df_uniq = merge_overlapping_predictions(df_clean,5) #min_distance in pixels
+
+    #check
+    annotated_img = draw_points_on_image(img, df_pred, radius=3, color="green")
+    annotated_img = draw_points_on_image(annotated_img, df_clean, radius=3, color="red")
+    annotated_img = draw_points_on_image(annotated_img, df_uniq, radius=3, color="blue")
+    annotated_img = draw_detected_circle_on_png(annotated_img,cx,cy,R,color="yellow",width=4)
+    annotated_img.save('remove_edge_check.png', format="PNG")
+    #END
+
+    return df_uniq
