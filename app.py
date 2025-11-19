@@ -129,27 +129,37 @@ if IMAGE_PATH is not None:
 
     # downloads
     if st.session_state.points:
+  # ---- naming input ----
+        img_name = st.text_input(
+            "File name for annotated image (no extension):",
+            value="annotated_image"
+        )
+
+        # sanitize filename
+        safe_name = "".join(c for c in img_name if c.isalnum() or c in ['_', '-'])
+        if safe_name == "":
+            safe_name = "annotated_image"
+
         # coordinates csv
         df_points = pd.DataFrame(st.session_state.points)
         csv_bytes = df_points.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="⬇️ Download coordinates (CSV)",
             data=csv_bytes,
-            file_name="points.csv",
+            file_name=f"{safe_name}_points.csv",
             mime="text/csv",
         )
 
-        # annotated image png (manual or model, depending on last state)
+        # annotated PNG
         buf = io.BytesIO()
         annotated_img.save(buf, format="PNG")
         buf.seek(0)
         st.download_button(
             label="⬇️ Download annotated image (PNG)",
             data=buf,
-            file_name="annotated_image.png",
+            file_name=f"{safe_name}.png",
             mime="image/png",
         )
-
 else:
     st.info("Please upload an image to begin.")
 
